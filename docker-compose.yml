@@ -1,0 +1,87 @@
+name: enterprise-agentic-rag
+
+x-rag-build: &rag-build
+  context: .
+  args:
+    TORCH_VERSION: ${TORCH_VERSION:-2.14.1}
+    TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
+    PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+
+x-rag-env: &rag-env
+  TZ: Asia/Shanghai
+  HF_HOME: /root/.cache/huggingface
+  HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+  CHROMA_PATH: /app/data/chroma_db
+
+services:
+  rag-api:
+    build: *rag-build
+    image: enterprise-agentic-rag:latest
+    env_file:
+      - .env
+    environment:
+      <<: *rag-env
+    ports:
+      - "8000:8000"
+    volumes:
+      - "./data/chroma_db:/app/data/chroma_db"
+      - "${HF_CACHE_DIR:-./hf_cache}:/root/.cache/huggingface"
+    command:
+      - python
+      - -m
+      - uvicorn
+      - api.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    restart: unless-stopped
+    # GPU 机器：取消注释，并使用 cu126 构建（见 README）
+    # gpus: all
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  rag-web:
+    build: *rag-build
+    image: enterprise-agentic-rag:latest
+    env_file:
+      - .env
+    environment:
+      <<: *rag-env
+    ports:
+      - "8501:8501"
+    volumes:
+      - "./data/chroma_db:/app/data/chroma_db"
+      - "${HF_CACHE_DIR:-./hf_cache}:/root/.cache/huggingface"
+    command:
+      - streamlit
+      - run
+      - app/main.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+      - --browser.gatherUsageStats=false
+    depends_on:
+      rag-api:
+        condition: service_healthy
+    restart: unless-stopped
+    # GPU 机器：取消注释
+    # gpus: all
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health')"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
